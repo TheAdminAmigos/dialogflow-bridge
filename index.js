@@ -1,53 +1,41 @@
-const express = require("express");
-const WebSocket = require("ws");
+const WebSocket = require('ws');
 
-const app = express();
-const port = process.env.PORT || 10000;
+// Start WebSocket server on port 10000
+const wss = new WebSocket.Server({ port: 10000 });
 
-app.use(express.urlencoded({ extended: false }));
+wss.on('connection', function connection(ws) {
+  console.log('✅ WebSocket connection established');
 
-app.post("/", (req, res) => {
-  console.log("Received Twilio HTTP POST.");
-  res.type("text/xml");
-  res.send(`
-    <Response>
-      <Start>
-        <Stream url="wss://${req.headers.host}/media"/>
-      </Start>
-      <Say voice="alice">Hi Martyn, I'm listening!</Say>
-    </Response>
-  `);
-});
+  ws.on('message', function incoming(message) {
+    let data;
+    try {
+      // Parse the incoming JSON
+      data = JSON.parse(message.toString());
+    } catch (err) {
+      console.error('❌ Failed to parse incoming message:', err);
+      return;
+    }
 
-const server = app.listen(port, () => {
-  console.log(`Express server listening on port ${port}`);
-});
+    console.log('🔹 Event:', data.event);
 
-const wss = new WebSocket.Server({ server, path: "/media" });
+    if (data.event === 'media' && data.media && data.media.payload) {
+      // Convert audio payload from base64 to Buffer
+      const audioBuffer = Buffer.from(data.media.payload, 'base64');
+      console.log('🔊 Received audio buffer (first 10 bytes):', audioBuffer.slice(0, 10));
+    }
 
-wss.on("connection", (ws) => {
-  console.log("WebSocket connection established.");
+    if (data.event === 'start') {
+      console.log('🟢 Call started:', JSON.stringify(data.start, null, 2));
+    }
 
-  ws.on("message", (message) => {
-    console.log("RAW MESSAGE RECEIVED:", message);
-
-    // Reply to keep the stream alive
-    ws.send(JSON.stringify({
-      event: "mark",
-      name: "alive"
-    }));
+    if (data.event === 'stop') {
+      console.log('🔴 Call stopped.');
+    }
   });
 
-  ws.on("ping", () => {
-    console.log("Received ping from Twilio.");
-    ws.pong(); // Respond to ping
-  });
-
-  ws.on("error", (err) => {
-    console.error("WebSocket error:", err);
-  });
-
-  ws.on("close", (code, reason) => {
-    console.warn(`WebSocket closed. Code: ${code}, Reason: ${reason}`);
+  ws.on('close', function close() {
+    console.log('❎ WebSocket connection closed');
   });
 });
+
+console.log('🌐 WebSocket server listening on port 10000');
