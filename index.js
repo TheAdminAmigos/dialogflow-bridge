@@ -72,7 +72,7 @@ wss.on("connection", (ws) => {
         // ✅ Send a "mark" event to Twilio to keep the stream alive
 ws.send(JSON.stringify({
   event: "mark",
-  name: replyText || "no_response"
+  name: (replyText && replyText.trim()) ? replyText : "no_response"
 }));
       } catch (err) {
         console.error("Dialogflow error:", err);
