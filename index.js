@@ -1,23 +1,44 @@
 const express = require("express");
-const app = express();
+const WebSocket = require("ws");
 
+const app = express();
+const port = process.env.PORT || 10000;
+
+// Middleware to parse URL-encoded data (Twilio sends POST as form data)
 app.use(express.urlencoded({ extended: false }));
 
-// Log EVERYTHING that comes in
-app.all("*", (req, res) => {
-  console.log("🔵 Incoming request:");
-  console.log("Headers:", req.headers);
-  console.log("Body:", req.body);
-
+// Twilio POST handler
+app.post("/", (req, res) => {
+  console.log("Received Twilio HTTP POST.");
   res.type("text/xml");
   res.send(`
     <Response>
-      <Say>Hello, this is your Dialogflow bot test. Your connection works.</Say>
+      <Start>
+        <Stream url="wss://${req.headers.host}/media"/>
+      </Start>
+      <Say voice="alice">Hi Martyn, I'm listening!</Say>
     </Response>
   `);
 });
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+// Start the HTTP server
+const server = app.listen(port, () => {
+  console.log(`Express server listening on port ${port}`);
+});
+
+// Create the WebSocket server
+const wss = new WebSocket.Server({ server, path: "/media" });
+
+// Handle incoming WebSocket connections
+wss.on("connection", (ws) => {
+  console.log("WebSocket connection established.");
+
+  ws.on("message", (message) => {
+    console.log("Received WebSocket message:");
+    console.log(message.toString());
+  });
+
+  ws.on("close", () => {
+    console.log("WebSocket connection closed.");
+  });
 });
