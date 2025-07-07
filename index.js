@@ -30,10 +30,13 @@ wss.on("connection", (ws) => {
 
   ws.on("message", (message) => {
     console.log("RAW MESSAGE RECEIVED:", message);
-    return;
   });
 
-  ws.on("close", () => {
-    console.log("WebSocket connection closed.");
+  ws.on("error", (err) => {
+    console.error("WebSocket error:", err);
+  });
+
+  ws.on("close", (code, reason) => {
+    console.warn(`WebSocket closed. Code: ${code}, Reason: ${reason}`);
   });
 });
