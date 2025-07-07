@@ -34,7 +34,7 @@ const wss = new WebSocket.Server({ server, path: "/media" });
 wss.on("connection", (ws) => {
   console.log("WebSocket connection established.");
 
-  ws.on("message", async (message) => {
+  ws.on("message", (message) => {
     if (!message) {
       console.warn("Received undefined or empty message, ignoring.");
       return;
@@ -56,53 +56,51 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    if (parsed.event === "start") {
-      console.log("Streaming started.");
-      // ✅ Create a new Dialogflow session for this call
-      ws.dialogflowSession = sessionClient.projectAgentSessionPath(
-        credentials.project_id,
-        uuid.v4()
-      );
-    }
-
-    if (parsed.event === "media") {
-      console.log("Received audio chunk.");
-
-      // ✅ Convert base64 payload to Buffer
-      const audioBuffer = Buffer.from(parsed.media.payload, "base64");
-
-      // ✅ Prepare request to Dialogflow
-      const request = {
-        session: ws.dialogflowSession,
-        queryInput: {
-          audioConfig: {
-            audioEncoding: "AUDIO_ENCODING_LINEAR_16",
-            sampleRateHertz: 8000,
-            languageCode: "en-US"
-          }
-        },
-        inputAudio: audioBuffer
-      };
-
-      try {
-        const [response] = await sessionClient.detectIntent(request);
-        const replyText = response.queryResult.fulfillmentText;
-        console.log("Dialogflow response:", replyText);
-
-        // ✅ Always send a simple constant mark event to keep the stream alive
-        ws.send(JSON.stringify({
-          event: "mark",
-          name: "alive"
-        }));
-
-      } catch (err) {
-        console.error("Dialogflow error:", err);
+    (async () => {
+      if (parsed.event === "start") {
+        console.log("Streaming started.");
+        ws.dialogflowSession = sessionClient.projectAgentSessionPath(
+          credentials.project_id,
+          uuid.v4()
+        );
       }
-    }
 
-    if (parsed.event === "stop") {
-      console.log("Streaming stopped.");
-    }
+      if (parsed.event === "media") {
+        console.log("Received audio chunk.");
+
+        const audioBuffer = Buffer.from(parsed.media.payload, "base64");
+
+        const request = {
+          session: ws.dialogflowSession,
+          queryInput: {
+            audioConfig: {
+              audioEncoding: "AUDIO_ENCODING_LINEAR_16",
+              sampleRateHertz: 8000,
+              languageCode: "en-US"
+            }
+          },
+          inputAudio: audioBuffer
+        };
+
+        try {
+          const [response] = await sessionClient.detectIntent(request);
+          const replyText = response.queryResult.fulfillmentText;
+          console.log("Dialogflow response:", replyText);
+
+          ws.send(JSON.stringify({
+            event: "mark",
+            name: "alive"
+          }));
+
+        } catch (err) {
+          console.error("Dialogflow error:", err);
+        }
+      }
+
+      if (parsed.event === "stop") {
+        console.log("Streaming stopped.");
+      }
+    })();
   });
 
   ws.on("close", () => {
