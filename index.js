@@ -6,7 +6,6 @@ const uuid = require("uuid");
 const app = express();
 const port = process.env.PORT || 10000;
 
-// ✅ Create Dialogflow session client
 const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
 const sessionClient = new dialogflow.SessionsClient({ credentials });
 
@@ -35,75 +34,48 @@ wss.on("connection", (ws) => {
   console.log("WebSocket connection established.");
 
   ws.on("message", (message) => {
-    // Convert Buffer or undefined to string safely
-    let msgStr = "";
-    if (Buffer.isBuffer(message)) {
-      msgStr = message.toString();
-    } else if (typeof message === "string") {
-      msgStr = message;
-    } else {
-      console.warn("Received message of unknown type, ignoring.");
+    console.log("RAW MESSAGE:", message);
+
+    if (!message) {
+      console.warn("Received undefined or empty message, ignoring.");
       return;
     }
 
-    if (!msgStr.trim()) {
-      console.warn("Received empty or blank message, ignoring.");
+    if (typeof message !== "string") {
+      console.warn("Received non-string message, ignoring.");
+      return;
+    }
+
+    if (message.trim().length === 0) {
+      console.warn("Received blank string message, ignoring.");
       return;
     }
 
     let parsed;
     try {
-      parsed = JSON.parse(msgStr);
+      parsed = JSON.parse(message);
     } catch (err) {
-      console.warn("Received non-JSON message, ignoring.");
+      console.warn("Received non-JSON string message, ignoring.");
       return;
     }
 
-    (async () => {
-      if (parsed.event === "start") {
-        console.log("Streaming started.");
-        ws.dialogflowSession = sessionClient.projectAgentSessionPath(
-          credentials.project_id,
-          uuid.v4()
-        );
-      }
+    console.log("Parsed JSON message:", parsed);
 
-      if (parsed.event === "media") {
-        console.log("Received audio chunk.");
+    if (parsed.event === "start") {
+      console.log("Streaming started.");
+      ws.dialogflowSession = sessionClient.projectAgentSessionPath(
+        credentials.project_id,
+        uuid.v4()
+      );
+    }
 
-        const audioBuffer = Buffer.from(parsed.media.payload, "base64");
+    if (parsed.event === "media") {
+      console.log("Received audio chunk.");
+    }
 
-        const request = {
-          session: ws.dialogflowSession,
-          queryInput: {
-            audioConfig: {
-              audioEncoding: "AUDIO_ENCODING_LINEAR_16",
-              sampleRateHertz: 8000,
-              languageCode: "en-US"
-            }
-          },
-          inputAudio: audioBuffer
-        };
-
-        try {
-          const [response] = await sessionClient.detectIntent(request);
-          const replyText = response.queryResult.fulfillmentText;
-          console.log("Dialogflow response:", replyText);
-
-          ws.send(JSON.stringify({
-            event: "mark",
-            name: "alive"
-          }));
-
-        } catch (err) {
-          console.error("Dialogflow error:", err);
-        }
-      }
-
-      if (parsed.event === "stop") {
-        console.log("Streaming stopped.");
-      }
-    })();
+    if (parsed.event === "stop") {
+      console.log("Streaming stopped.");
+    }
   });
 
   ws.on("close", () => {
