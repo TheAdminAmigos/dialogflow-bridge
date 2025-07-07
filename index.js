@@ -69,6 +69,11 @@ wss.on("connection", (ws) => {
         const [response] = await sessionClient.detectIntent(request);
         const replyText = response.queryResult.fulfillmentText;
         console.log("Dialogflow response:", replyText);
+        // ✅ Send a "mark" event to Twilio to keep the stream alive
+ws.send(JSON.stringify({
+  event: "mark",
+  name: replyText || "no_response"
+}));
       } catch (err) {
         console.error("Dialogflow error:", err);
       }
