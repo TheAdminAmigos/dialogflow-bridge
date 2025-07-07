@@ -35,20 +35,25 @@ wss.on("connection", (ws) => {
   console.log("WebSocket connection established.");
 
   ws.on("message", (message) => {
-    // ✅ If message is not a string, skip it
-    if (typeof message !== "string") {
-      console.warn("Received non-string message, ignoring.");
+    // Convert Buffer or undefined to string safely
+    let msgStr = "";
+    if (Buffer.isBuffer(message)) {
+      msgStr = message.toString();
+    } else if (typeof message === "string") {
+      msgStr = message;
+    } else {
+      console.warn("Received message of unknown type, ignoring.");
       return;
     }
 
-    if (!message || message.trim().length === 0) {
+    if (!msgStr.trim()) {
       console.warn("Received empty or blank message, ignoring.");
       return;
     }
 
     let parsed;
     try {
-      parsed = JSON.parse(message);
+      parsed = JSON.parse(msgStr);
     } catch (err) {
       console.warn("Received non-JSON message, ignoring.");
       return;
