@@ -35,7 +35,14 @@ wss.on("connection", (ws) => {
   console.log("WebSocket connection established.");
 
   ws.on("message", async (message) => {
-    const parsed = JSON.parse(message);
+    let parsed;
+
+    try {
+      parsed = JSON.parse(message);
+    } catch (err) {
+      console.warn("Received non-JSON message, ignoring.");
+      return;
+    }
 
     if (parsed.event === "start") {
       console.log("Streaming started.");
