@@ -70,9 +70,15 @@ wss.on("connection", (ws) => {
         const replyText = response.queryResult.fulfillmentText;
         console.log("Dialogflow response:", replyText);
         // ✅ Send a "mark" event to Twilio to keep the stream alive
+// ✅ Clean up the text to avoid invalid JSON or spaces
+let safeReply = "no_response";
+if (replyText && replyText.trim()) {
+  safeReply = replyText.trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
+}
+
 ws.send(JSON.stringify({
   event: "mark",
-  name: (replyText && replyText.trim()) ? replyText : "no_response"
+  name: safeReply
 }));
       } catch (err) {
         console.error("Dialogflow error:", err);
