@@ -1,56 +1,18 @@
-require("dotenv").config();
-const fs = require("fs");
-const WebSocket = require("ws");
-const uuid = require("uuid");
-const dialogflow = require("@google-cloud/dialogflow");
+const express = require("express");
+const app = express();
 
-const wss = new WebSocket.Server({ port: process.env.PORT || 8080 });
+app.use(express.urlencoded({ extended: false }));
 
-console.log("WebSocket server started on port", process.env.PORT || 8080);
+app.post("/", (req, res) => {
+  res.type("text/xml");
+  res.send(`
+    <Response>
+      <Say>Hello, this is your Dialogflow bot test. Your connection works.</Say>
+    </Response>
+  `);
+});
 
-wss.on("connection", function connection(ws) {
-  console.log("Client connected");
-
-  const sessionId = uuid.v4();
-  const sessionClient = new dialogflow.SessionsClient({
-    keyFilename: "credentials.json",
-  });
-  const sessionPath = sessionClient.projectAgentSessionPath(
-    process.env.PROJECT_ID,
-    sessionId,
-  );
-
-  const detectStream = sessionClient
-    .streamingDetectIntent()
-    .on("error", console.error)
-    .on("data", (data) => {
-      if (data.recognitionResult) {
-        console.log(
-          `Intermediate transcript: ${data.recognitionResult.transcript}`,
-        );
-      } else if (data.queryResult) {
-        console.log(`Detected intent: ${data.queryResult.intent.displayName}`);
-        ws.send(JSON.stringify({ text: data.queryResult.fulfillmentText }));
-      }
-    });
-
-  ws.on("message", function incoming(message) {
-    // When Twilio sends audio, it arrives as binary
-    detectStream.write({
-      inputAudio: message,
-      queryInput: {
-        audioConfig: {
-          audioEncoding: "AUDIO_ENCODING_LINEAR_16",
-          sampleRateHertz: 8000,
-          languageCode: process.env.LANGUAGE_CODE,
-        },
-      },
-      singleUtterance: true,
-    });
-  });
-
-  ws.on("close", () => {
-    console.log("Client disconnected");
-    detectStream.end();
-  });
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
 });
