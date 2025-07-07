@@ -30,6 +30,17 @@ wss.on("connection", (ws) => {
 
   ws.on("message", (message) => {
     console.log("RAW MESSAGE RECEIVED:", message);
+
+    // Reply to keep the stream alive
+    ws.send(JSON.stringify({
+      event: "mark",
+      name: "alive"
+    }));
+  });
+
+  ws.on("ping", () => {
+    console.log("Received ping from Twilio.");
+    ws.pong(); // Respond to ping
   });
 
   ws.on("error", (err) => {
