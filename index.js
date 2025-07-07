@@ -3,7 +3,12 @@ const app = express();
 
 app.use(express.urlencoded({ extended: false }));
 
-app.post("/", (req, res) => {
+// Log EVERYTHING that comes in
+app.all("*", (req, res) => {
+  console.log("🔵 Incoming request:");
+  console.log("Headers:", req.headers);
+  console.log("Body:", req.body);
+
   res.type("text/xml");
   res.send(`
     <Response>
