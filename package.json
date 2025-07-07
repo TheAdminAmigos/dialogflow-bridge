@@ -1,0 +1,15 @@
+{
+  "name": "dialogflow-bridge",
+  "version": "1.0.0",
+  "description": "Twilio + Dialogflow Voice Bridge",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@google-cloud/dialogflow": "^4.4.0",
+    "dotenv": "^17.0.1",
+    "uuid": "^11.1.0",
+    "ws": "^8.13.0"
+  }
+}
