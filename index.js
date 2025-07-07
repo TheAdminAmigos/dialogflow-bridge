@@ -36,4 +36,28 @@ wss.on("connection", (ws) => {
     } else if (msg.event === "media") {
       const audioBuffer = Buffer.from(msg.media.payload, "base64");
       console.log("🔊 Received audio buffer (first 10 bytes):", audioBuffer.slice(0, 10));
-      // Here is where you would process or forward the aud
+      // Audio processing goes here later
+    } else if (msg.event === "stop") {
+      console.log("🔴 Call stopped.");
+    }
+  });
+
+  ws.on("close", () => {
+    console.log("❎ WebSocket connection closed");
+  });
+});
+
+// Upgrade HTTP requests to WebSocket for /media
+const server = app.listen(process.env.PORT || 10000, () => {
+  console.log(`🌐 Express server listening on port ${process.env.PORT || 10000}`);
+});
+
+server.on("upgrade", (request, socket, head) => {
+  if (request.url === "/media") {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit("connection", ws, request);
+    });
+  } else {
+    socket.destroy();
+  }
+});
