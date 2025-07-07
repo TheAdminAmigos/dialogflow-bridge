@@ -35,8 +35,13 @@ wss.on("connection", (ws) => {
   console.log("WebSocket connection established.");
 
   ws.on("message", async (message) => {
-    let parsed;
+    // ✅ Safely ignore empty messages
+    if (!message || message.length === 0) {
+      console.warn("Received empty message, ignoring.");
+      return;
+    }
 
+    let parsed;
     try {
       parsed = JSON.parse(message);
     } catch (err) {
