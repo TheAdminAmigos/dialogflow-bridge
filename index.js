@@ -1,7 +1,23 @@
 // index.js
+
 const express = require("express");
 const bodyParser = require("body-parser");
 const WebSocket = require("ws");
+
+// Load Google Cloud client library
+const speech = require('@google-cloud/speech');
+
+// Parse the credentials JSON from the environment variable
+const googleCredentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+
+// Create the client with credentials
+const client = new speech.SpeechClient({
+  credentials: {
+    client_email: googleCredentials.client_email,
+    private_key: googleCredentials.private_key
+  },
+  projectId: googleCredentials.project_id
+});
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
