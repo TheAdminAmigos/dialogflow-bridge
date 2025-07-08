@@ -3,14 +3,23 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const WebSocket = require("ws");
 
-// Load Google Cloud client library
+// Load Google Cloud clients
 const speech = require("@google-cloud/speech");
+const textToSpeech = require("@google-cloud/text-to-speech");
 
-// Parse the credentials JSON from the environment variable
+// Parse credentials from environment variable
 const googleCredentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
 
-// Create the Speech-to-Text client
-const client = new speech.SpeechClient({
+// Initialize clients
+const speechClient = new speech.SpeechClient({
+  credentials: {
+    client_email: googleCredentials.client_email,
+    private_key: googleCredentials.private_key
+  },
+  projectId: googleCredentials.project_id
+});
+
+const ttsClient = new textToSpeech.TextToSpeechClient({
   credentials: {
     client_email: googleCredentials.client_email,
     private_key: googleCredentials.private_key
@@ -21,7 +30,7 @@ const client = new speech.SpeechClient({
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
-// Serve TwiML instructions to Twilio when a call starts
+// Serve TwiML instructions to Twilio
 app.post("/", (req, res) => {
   console.log("✅ Received Twilio HTTP POST");
 
@@ -31,8 +40,8 @@ app.post("/", (req, res) => {
       <Start>
         <Stream url="wss://${req.headers.host}/media"/>
       </Start>
-      <Say voice="alice">Hi Martyn, I'm listening!</Say>
-      <Pause length="600"/>
+      <Say voice="Polly.Joanna">Hi, this is your AI Assistant. Please speak now.</Say>
+      <Pause length="60"/>
     </Response>
   `);
 });
@@ -43,47 +52,48 @@ const wss = new WebSocket.Server({ noServer: true });
 wss.on("connection", (ws) => {
   console.log("✅ WebSocket connection established");
 
-  // Create a streaming recognize request
-  const recognizeStream = client
-    .streamingRecognize({
-      config: {
-        encoding: "MULAW",
-        sampleRateHertz: 8000,
-        languageCode: "en-GB"
-      },
-      interimResults: true
-    })
-    .on("error", (err) => {
-      console.error("❌ Speech recognition error:", err);
-    })
-    .on("data", (data) => {
-      const transcript = data.results[0]?.alternatives[0]?.transcript;
-      if (transcript) {
-        console.log(`📝 Transcript: ${transcript}`);
-      }
-    });
-
-  ws.on("message", (message) => {
+  ws.on("message", async (message) => {
     const msg = JSON.parse(message);
+
     if (msg.event === "start") {
       console.log("🔹 Event: start");
-      console.log("🟢 Call started:", JSON.stringify(msg.start, null, 2));
     } else if (msg.event === "media") {
       const audioBuffer = Buffer.from(msg.media.payload, "base64");
-      recognizeStream.write(audioBuffer);
+      console.log("🎙️ Received audio chunk.");
+
+      // When audio comes in, synthesize TTS (static text)
+      const [response] = await ttsClient.synthesizeSpeech({
+        input: { text: "Hello! This is your test message from Callie. Your setup is working perfectly." },
+        voice: {
+          languageCode: "en-GB",
+          name: "en-GB-Chirp3-HD-Callirrhoe"
+        },
+        audioConfig: {
+          audioEncoding: "MULAW",
+          sampleRateHertz: 8000
+        }
+      });
+
+      // Send audio back as base64
+      ws.send(JSON.stringify({
+        event: "media",
+        media: {
+          payload: response.audioContent.toString("base64")
+        }
+      }));
+
+      console.log("🗣️ Sent static TTS audio.");
     } else if (msg.event === "stop") {
       console.log("🔴 Call stopped.");
-      recognizeStream.end();
     }
   });
 
   ws.on("close", () => {
     console.log("❎ WebSocket connection closed");
-    recognizeStream.end();
   });
 });
 
-// Upgrade HTTP requests to WebSocket for /media
+// Upgrade HTTP to WebSocket
 const server = app.listen(process.env.PORT || 10000, () => {
   console.log(`🌐 Express server listening on port ${process.env.PORT || 10000}`);
 });
