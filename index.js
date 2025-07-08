@@ -54,4 +54,46 @@ wss.on("connection", (ws) => {
       interimResults: true
     })
     .on("error", (err) => {
-      console.error("❌ Speech r
+      console.error("❌ Speech recognition error:", err);
+    })
+    .on("data", (data) => {
+      const transcript = data.results[0]?.alternatives[0]?.transcript;
+      if (transcript) {
+        console.log(`📝 Transcript: ${transcript}`);
+      }
+    });
+
+  ws.on("message", (message) => {
+    const msg = JSON.parse(message);
+    if (msg.event === "start") {
+      console.log("🔹 Event: start");
+      console.log("🟢 Call started:", JSON.stringify(msg.start, null, 2));
+    } else if (msg.event === "media") {
+      const audioBuffer = Buffer.from(msg.media.payload, "base64");
+      recognizeStream.write(audioBuffer);
+    } else if (msg.event === "stop") {
+      console.log("🔴 Call stopped.");
+      recognizeStream.end();
+    }
+  });
+
+  ws.on("close", () => {
+    console.log("❎ WebSocket connection closed");
+    recognizeStream.end();
+  });
+});
+
+// Upgrade HTTP requests to WebSocket for /media
+const server = app.listen(process.env.PORT || 10000, () => {
+  console.log(`🌐 Express server listening on port ${process.env.PORT || 10000}`);
+});
+
+server.on("upgrade", (request, socket, head) => {
+  if (request.url === "/media") {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit("connection", ws, request);
+    });
+  } else {
+    socket.destroy();
+  }
+});
