@@ -1,33 +1,37 @@
 // index.js
+require("dotenv").config();
+
+const fs = require("fs");
 const express = require("express");
+const morgan = require("morgan");
 const bodyParser = require("body-parser");
 const WebSocket = require("ws");
+const { Configuration, OpenAIApi } = require("openai");
 
 // Load Google Cloud clients
 const speech = require("@google-cloud/speech");
-const textToSpeech = require("@google-cloud/text-to-speech");
 
-// Parse credentials from environment variable
-const googleCredentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+// Read and parse the credentials JSON file
+const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+const googleCredentials = JSON.parse(fs.readFileSync(credentialsPath, "utf8"));
 
-// Initialize clients
 const speechClient = new speech.SpeechClient({
   credentials: {
     client_email: googleCredentials.client_email,
-    private_key: googleCredentials.private_key
+    private_key: googleCredentials.private_key,
   },
-  projectId: googleCredentials.project_id
+  projectId: googleCredentials.project_id,
 });
 
-const ttsClient = new textToSpeech.TextToSpeechClient({
-  credentials: {
-    client_email: googleCredentials.client_email,
-    private_key: googleCredentials.private_key
-  },
-  projectId: googleCredentials.project_id
-});
+// Initialize OpenAI
+const openai = new OpenAIApi(
+  new Configuration({
+    apiKey: process.env.OPENAI_API_KEY,
+  })
+);
 
 const app = express();
+app.use(morgan("dev"));
 app.use(bodyParser.urlencoded({ extended: false }));
 
 // Serve TwiML instructions to Twilio
@@ -40,7 +44,7 @@ app.post("/", (req, res) => {
       <Start>
         <Stream url="wss://${req.headers.host}/media"/>
       </Start>
-      <Say voice="Polly.Joanna">Hi, this is your AI Assistant. Please speak now.</Say>
+      <Say voice="Polly.Joanna">Hi, this is your AI Assistant. I'm listening now.</Say>
       <Pause length="60"/>
     </Response>
   `);
@@ -52,6 +56,26 @@ const wss = new WebSocket.Server({ noServer: true });
 wss.on("connection", (ws) => {
   console.log("✅ WebSocket connection established");
 
+  let transcriptBuffer = "";
+
+  const recognizeStream = speechClient
+    .streamingRecognize({
+      config: {
+        encoding: "MULAW",
+        sampleRateHertz: 8000,
+        languageCode: "en-GB",
+      },
+      interimResults: false,
+    })
+    .on("error", (err) => console.error("❌ STT Error:", err))
+    .on("data", (data) => {
+      const transcript = data.results[0]?.alternatives[0]?.transcript || "";
+      if (transcript.trim()) {
+        console.log(`📝 Transcript chunk: ${transcript}`);
+        transcriptBuffer += transcript + " ";
+      }
+    });
+
   ws.on("message", async (message) => {
     const msg = JSON.parse(message);
 
@@ -59,32 +83,32 @@ wss.on("connection", (ws) => {
       console.log("🔹 Event: start");
     } else if (msg.event === "media") {
       const audioBuffer = Buffer.from(msg.media.payload, "base64");
-      console.log("🎙️ Received audio chunk.");
-
-      // When audio comes in, synthesize TTS (static text)
-      const [response] = await ttsClient.synthesizeSpeech({
-        input: { text: "Hello! This is your test message from Callie. Your setup is working perfectly." },
-        voice: {
-          languageCode: "en-GB",
-          name: "en-GB-Chirp3-HD-Callirrhoe"
-        },
-        audioConfig: {
-          audioEncoding: "MULAW",
-          sampleRateHertz: 8000
-        }
-      });
-
-      // Send audio back as base64
-      ws.send(JSON.stringify({
-        event: "media",
-        media: {
-          payload: response.audioContent.toString("base64")
-        }
-      }));
-
-      console.log("🗣️ Sent static TTS audio.");
+      recognizeStream.write(audioBuffer);
     } else if (msg.event === "stop") {
-      console.log("🔴 Call stopped.");
+      console.log("🔴 Call stopped. Finalizing transcription...");
+      recognizeStream.destroy();
+      ws.close();
+
+      if (transcriptBuffer.trim()) {
+        console.log(`✅ Final Transcript: ${transcriptBuffer}`);
+
+        // Generate GPT reply
+        try {
+          const gptResponse = await openai.createChatCompletion({
+            model: "gpt-4o",
+            messages: [
+              { role: "system", content: "You are a helpful receptionist answering customer queries." },
+              { role: "user", content: transcriptBuffer },
+            ],
+          });
+          const replyText = gptResponse.data.choices[0].message.content;
+          console.log(`💬 GPT Reply: ${replyText}`);
+        } catch (error) {
+          console.error("❌ GPT Error:", error);
+        }
+      } else {
+        console.log("⚠️ No transcript captured.");
+      }
     }
   });
 
@@ -94,8 +118,8 @@ wss.on("connection", (ws) => {
 });
 
 // Upgrade HTTP to WebSocket
-const server = app.listen(process.env.PORT || 10000, () => {
-  console.log(`🌐 Express server listening on port ${process.env.PORT || 10000}`);
+const server = app.listen(process.env.PORT || 3000, () => {
+  console.log(`🌐 Express server listening on port ${process.env.PORT || 3000}`);
 });
 
 server.on("upgrade", (request, socket, head) => {
