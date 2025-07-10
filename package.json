@@ -1,21 +1,16 @@
 {
   "name": "dialogflow-bridge",
   "version": "1.0.0",
-  "description": "Twilio + Dialogflow Voice Bridge",
+  "description": "Twilio Voice Bridge with GPT",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-  "@google-cloud/dialogflow": "^4.4.0",
-  "@google-cloud/speech": "^6.3.2",
-  "@google-cloud/text-to-speech": "^4.2.0",
-  "dotenv": "^17.1.0",
-  "express": "^4.18.2",
-  "morgan": "^1.10.0",
-  "uuid": "^11.1.0",
-  "ws": "^8.13.0",
-  "openai": "^4.26.0"
-}
-
+    "@google-cloud/speech": "^6.3.2",
+    "dotenv": "^17.0.1",
+    "express": "^4.18.2",
+    "openai": "^4.16.1",
+    "twilio": "^4.20.0"
+  }
 }
