@@ -5,20 +5,16 @@ const express = require("express");
 const morgan = require("morgan");
 const bodyParser = require("body-parser");
 const WebSocket = require("ws");
-const { Configuration, OpenAIApi } = require("openai");
+const OpenAI = require("openai");
 
-// Load Google Cloud clients
+// Load Google Cloud Speech-to-Text
 const speech = require("@google-cloud/speech");
 
 // Let Google SDK auto-detect credentials
 const speechClient = new speech.SpeechClient();
 
-// Initialize OpenAI
-const openai = new OpenAIApi(
-  new Configuration({
-    apiKey: process.env.OPENAI_API_KEY,
-  })
-);
+// Initialize OpenAI (v4 syntax)
+const openai = new OpenAI();
 
 const app = express();
 app.use(morgan("dev"));
@@ -84,14 +80,14 @@ wss.on("connection", (ws) => {
 
         // Generate GPT reply
         try {
-          const gptResponse = await openai.createChatCompletion({
+          const gptResponse = await openai.chat.completions.create({
             model: "gpt-4o",
             messages: [
               { role: "system", content: "You are a helpful receptionist answering customer queries." },
               { role: "user", content: transcriptBuffer },
             ],
           });
-          const replyText = gptResponse.data.choices[0].message.content;
+          const replyText = gptResponse.choices[0].message.content;
           console.log(`💬 GPT Reply: ${replyText}`);
         } catch (error) {
           console.error("❌ GPT Error:", error);
