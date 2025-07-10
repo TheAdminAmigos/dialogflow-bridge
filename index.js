@@ -11,18 +11,8 @@ const { Configuration, OpenAIApi } = require("openai");
 // Load Google Cloud clients
 const speech = require("@google-cloud/speech");
 
-// Read and parse the credentials JSON file
-const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-console.log("DEBUG: GOOGLE_APPLICATION_CREDENTIALS =", credentialsPath);
-const googleCredentials = JSON.parse(fs.readFileSync(credentialsPath, "utf8"));
-
-const speechClient = new speech.SpeechClient({
-  credentials: {
-    client_email: googleCredentials.client_email,
-    private_key: googleCredentials.private_key,
-  },
-  projectId: googleCredentials.project_id,
-});
+// Let Google SDK auto-load the credentials:
+const speechClient = new speech.SpeechClient();
 
 // Initialize OpenAI
 const openai = new OpenAIApi(
