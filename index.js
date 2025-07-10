@@ -1,47 +1,43 @@
 // index.js
 require("dotenv").config();
-const fs = require("fs");
 const express = require("express");
 const { OpenAI } = require("openai");
-const { Readable } = require("stream");
 const twilio = require("twilio");
-const { SpeechClient } = require("@google-cloud/speech");
 
-// Twilio credentials from environment
+// Twilio credentials
 const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
 const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
-const client = twilio(twilioAccountSid, twilioAuthToken);
-
-// Google Cloud Speech client
-const speechClient = new SpeechClient({
-  keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
-});
-
-// OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-// Health check
-app.get("/", (req, res) => {
-  res.send("OK");
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
-app.post("/", async (req, res) => {
-  console.log("✅ Received Twilio HTTP POST");
+// Health check route
+app.get("/", (req, res) => {
+  res.send("✅ Dialogflow Bridge is live!");
+});
+
+// This endpoint responds to the initial call
+app.post("/voice", (req, res) => {
+  console.log("✅ Incoming call...");
 
   const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say("Hello! Please speak after the beep. Then wait a moment for my response.");
 
-  // Create a <Gather> verb to record speech
+  twiml.say(
+    {
+      voice: "Polly.Joanna",
+    },
+    "Hello! This is your virtual assistant. After the beep, please say your message, and I will reply."
+  );
+
   twiml.record({
     transcribe: true,
     transcribeCallback: "/transcription",
-    maxLength: 10,
+    maxLength: 15,
     playBeep: true,
     trim: "trim-silence",
   });
@@ -50,30 +46,54 @@ app.post("/", async (req, res) => {
   res.send(twiml.toString());
 });
 
+// This endpoint receives the transcription and responds
 app.post("/transcription", async (req, res) => {
-  console.log("✅ Received transcription callback");
+  console.log("✅ Received transcription callback.");
 
   const transcript = req.body.TranscriptionText || "";
-  console.log(`📝 Transcription: ${transcript}`);
+  console.log(`📝 Transcript: ${transcript}`);
 
-  // Call OpenAI to get reply
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
-      {
-        role: "system",
-        content: "You are a friendly phone assistant for Silver Birch Landscaping. Reply concisely and warmly."
-      },
-      { role: "user", content: transcript }
-    ],
-  });
+  if (!transcript) {
+    console.log("⚠️ Empty transcript.");
+    const emptyTwiml = new twilio.twiml.VoiceResponse();
+    emptyTwiml.say("I'm sorry, I didn't hear anything. Goodbye.");
+    emptyTwiml.hangup();
+    res.type("text/xml");
+    return res.send(emptyTwiml.toString());
+  }
 
-  const gptReply = completion.choices[0].message.content.trim();
-  console.log(`💬 GPT Reply: ${gptReply}`);
+  // Generate GPT reply
+  let reply = "I'm sorry, I couldn't understand your request.";
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a friendly receptionist for Silver Birch Landscaping. Answer questions concisely.",
+        },
+        {
+          role: "user",
+          content: transcript,
+        },
+      ],
+    });
 
-  // Respond to Twilio with <Say>
+    reply = completion.choices[0].message.content.trim();
+    console.log(`💬 GPT Reply: ${reply}`);
+  } catch (err) {
+    console.error("❌ GPT Error:", err);
+  }
+
+  // Send TwiML response with GPT reply
   const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say(gptReply);
+  twiml.say(
+    {
+      voice: "Polly.Joanna",
+    },
+    reply
+  );
   twiml.hangup();
 
   res.type("text/xml");
@@ -82,5 +102,5 @@ app.post("/transcription", async (req, res) => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`🌐 Express server listening on port ${PORT}`);
+  console.log(`🌐 Server listening on port ${PORT}`);
 });
