@@ -13,6 +13,7 @@ const speech = require("@google-cloud/speech");
 
 // Read and parse the credentials JSON file
 const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+console.log("DEBUG: GOOGLE_APPLICATION_CREDENTIALS =", credentialsPath);
 const googleCredentials = JSON.parse(fs.readFileSync(credentialsPath, "utf8"));
 
 const speechClient = new speech.SpeechClient({
