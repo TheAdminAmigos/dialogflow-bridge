@@ -8,7 +8,7 @@
   },
   "dependencies": {
     "@google-cloud/dialogflow": "^4.4.0",
-    "@google-cloud/text-to-speech": "^4.4.0",
+    "@google-cloud/text-to-speech": "^4.2.0",
     "@google-cloud/speech": "^6.3.2",
     "dotenv": "^17.0.1",
     "uuid": "^11.1.0",
