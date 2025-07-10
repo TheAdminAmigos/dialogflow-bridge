@@ -1,7 +1,6 @@
 // index.js
 require("dotenv").config();
 
-const fs = require("fs");
 const express = require("express");
 const morgan = require("morgan");
 const bodyParser = require("body-parser");
@@ -11,7 +10,7 @@ const { Configuration, OpenAIApi } = require("openai");
 // Load Google Cloud clients
 const speech = require("@google-cloud/speech");
 
-// Let Google SDK auto-load the credentials:
+// Let Google SDK auto-detect credentials
 const speechClient = new speech.SpeechClient();
 
 // Initialize OpenAI
