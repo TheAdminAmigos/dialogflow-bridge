@@ -36,7 +36,7 @@ app.post("/voice", (req, res) => {
 
   twiml.record({
     transcribe: true,
-    transcribeCallback: "/transcription",
+    transcribeCallback: "https://dialogflow-bridge.onrender.com/transcription",
     maxLength: 15,
     playBeep: true,
     trim: "trim-silence",
