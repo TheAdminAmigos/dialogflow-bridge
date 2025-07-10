@@ -20,6 +20,11 @@ const app = express();
 app.use(morgan("dev"));
 app.use(bodyParser.urlencoded({ extended: false }));
 
+// Health check route so Twilio GET / doesn't 404
+app.get("/", (req, res) => {
+  res.send("✅ Dialogflow Bridge is live!");
+});
+
 // Serve TwiML instructions to Twilio
 app.post("/", (req, res) => {
   console.log("✅ Received Twilio HTTP POST");
