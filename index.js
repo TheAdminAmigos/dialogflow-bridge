@@ -1,6 +1,6 @@
 import express from "express";
 import { v4 as uuidv4 } from "uuid";
-import WebSocket from "ws";
+import { WebSocketServer } from "ws";
 import xml from "xml";
 import { SpeechClient } from "@google-cloud/speech";
 import OpenAI from "openai";
@@ -9,7 +9,7 @@ import OpenAI from "openai";
 const app = express();
 const speechClient = new SpeechClient();
 const openai = new OpenAI();
-const wss = new WebSocket.Server({ noServer: true });
+const wss = new WebSocketServer({ noServer: true });
 
 // Express webhook for Twilio
 app.use(express.urlencoded({ extended: true }));
