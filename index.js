@@ -1,105 +1,88 @@
-// index.js
+/**
+ * Noah's Semi Real-Time Bot - Node.js
+ * Version: Semi-Real-Time Basic
+ */
+
 require("dotenv").config();
 const express = require("express");
 const { OpenAI } = require("openai");
+const { SpeechClient } = require("@google-cloud/speech");
 const twilio = require("twilio");
+const fs = require("fs");
 
-// Twilio credentials
-const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
-const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
-
+// Initialise Express
 const app = express();
-app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+// Initialise Clients
+const openai = new OpenAI();
+const speechClient = new SpeechClient({
+  keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
 });
 
-// Health check route
+// Serve root
 app.get("/", (req, res) => {
-  res.send("✅ Dialogflow Bridge is live!");
+  res.send("👋 Noah's Bot is running!");
 });
 
-// This endpoint responds to the initial call
+// Webhook endpoint for incoming calls
 app.post("/voice", (req, res) => {
-  console.log("✅ Incoming call...");
-
   const twiml = new twilio.twiml.VoiceResponse();
 
   twiml.say(
-    {
-      voice: "Polly.Joanna",
-    },
-    "Hello! This is your virtual assistant. After the beep, please say your message, and I will reply."
+    { voice: "Polly.Joanna" },
+    "Hello! This is your virtual assistant. Please speak after the beep, and I will respond shortly."
   );
 
   twiml.record({
     transcribe: true,
-    transcribeCallback: "https://dialogflow-bridge.onrender.com/transcription",
+    transcribeCallback: "/transcription",
     maxLength: 15,
     playBeep: true,
-    trim: "trim-silence",
+    trim: "trim-silence"
   });
 
   res.type("text/xml");
   res.send(twiml.toString());
 });
 
-// This endpoint receives the transcription and responds
+// Handle the transcription callback
 app.post("/transcription", async (req, res) => {
-  console.log("✅ Received transcription callback.");
-
   const transcript = req.body.TranscriptionText || "";
-  console.log(`📝 Transcript: ${transcript}`);
+  console.log("📝 Transcription Received:", transcript);
 
-  if (!transcript) {
-    console.log("⚠️ Empty transcript.");
-    const emptyTwiml = new twilio.twiml.VoiceResponse();
-    emptyTwiml.say("I'm sorry, I didn't hear anything. Goodbye.");
-    emptyTwiml.hangup();
-    res.type("text/xml");
-    return res.send(emptyTwiml.toString());
-  }
-
-  // Generate GPT reply
-  let reply = "I'm sorry, I couldn't understand your request.";
-  try {
+  let gptResponse = "I'm sorry, I didn't catch that. Could you please repeat?";
+  if (transcript.trim().length > 0) {
+    // Send to GPT
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content:
-            "You are a friendly receptionist for Silver Birch Landscaping. Answer questions concisely.",
+          content: "You are a helpful assistant for a landscaping business. Answer questions politely and clearly."
         },
         {
           role: "user",
-          content: transcript,
-        },
-      ],
+          content: transcript
+        }
+      ]
     });
 
-    reply = completion.choices[0].message.content.trim();
-    console.log(`💬 GPT Reply: ${reply}`);
-  } catch (err) {
-    console.error("❌ GPT Error:", err);
+    gptResponse = completion.choices[0].message.content.trim();
   }
 
-  // Send TwiML response with GPT reply
+  console.log("💬 GPT Response:", gptResponse);
+
+  // Respond with TwiML to speak back
   const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say(
-    {
-      voice: "Polly.Joanna",
-    },
-    reply
-  );
-  twiml.hangup();
+  twiml.say({ voice: "Polly.Joanna" }, gptResponse);
 
   res.type("text/xml");
   res.send(twiml.toString());
 });
 
+// Start server
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🌐 Server listening on port ${PORT}`);
