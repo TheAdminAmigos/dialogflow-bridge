@@ -1,35 +1,51 @@
-import express from "express";
-import dotenv from "dotenv";
-import { OpenAI } from "openai";
-import { Twilio } from "twilio";
-import fs from "fs";
+// index.js (CommonJS version)
 
-dotenv.config();
+const express = require("express");
+const bodyParser = require("body-parser");
+const { OpenAI } = require("openai");
+const { GoogleAuth } = require("google-auth-library");
+const Twilio = require("twilio");
 
 const app = express();
-app.use(express.urlencoded({ extended: true }));
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
+const port = process.env.PORT || 10000;
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-const twilio = new Twilio(
+// Twilio client for call control
+const twilioClient = new Twilio(
   process.env.TWILIO_ACCOUNT_SID,
   process.env.TWILIO_AUTH_TOKEN
 );
 
-app.post("/voice", (req, res) => {
-  const twiml = new twilio.twiml.VoiceResponse();
+// Google STT auth
+const googleAuth = new GoogleAuth({
+  keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+  scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+});
 
+// Health check route
+app.get("/", (req, res) => {
+  res.send("✅ Dialogflow Bridge is live!");
+});
+
+// Voice webhook
+app.post("/voice", (req, res) => {
+  const twiml = new Twilio.twiml.VoiceResponse();
   twiml.say(
-    { voice: "Polly.Joanna" },
-    "Hello! This is your virtual assistant. After the beep, please say your message and I will reply."
+    {
+      voice: "Polly.Joanna",
+    },
+    "Hello! This is your virtual assistant. After the beep, please say your message, and I will reply."
   );
 
   twiml.record({
     transcribe: true,
     transcribeCallback: "/transcription",
-    maxLength: 10,
+    maxLength: 30,
     playBeep: true,
     trim: "trim-silence",
   });
@@ -38,61 +54,46 @@ app.post("/voice", (req, res) => {
   res.send(twiml.toString());
 });
 
+// Transcription handler
 app.post("/transcription", async (req, res) => {
   console.log("✅ Received transcription callback.");
-  const transcript = req.body.TranscriptionText || "";
+  const transcript = req.body.TranscriptionText;
   console.log(`📝 Transcript: ${transcript}`);
 
-  if (!transcript) {
-    // If transcript empty, prompt to repeat
-    const twiml = new twilio.twiml.VoiceResponse();
-    twiml.say(
-      { voice: "Polly.Joanna" },
-      "I'm sorry, I didn't hear anything. Could you please repeat that?"
-    );
-    twiml.record({
-      transcribe: true,
-      transcribeCallback: "/transcription",
-      maxLength: 10,
-      playBeep: true,
-      trim: "trim-silence",
-    });
-    res.type("text/xml");
-    return res.send(twiml.toString());
+  if (!transcript || transcript.trim() === "") {
+    console.log("⚠️ Empty transcript.");
+    return res.sendStatus(200);
   }
 
-  // Generate response with GPT
+  // Generate GPT reply
   const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: "gpt-4o",
     messages: [
       {
         role: "system",
-        content: "You are a friendly virtual assistant helping callers.",
+        content: "You are a helpful business assistant answering customer questions.",
       },
       { role: "user", content: transcript },
     ],
   });
 
-  const gptReply = completion.choices[0].message.content.trim();
-  console.log(`💬 GPT Reply: ${gptReply}`);
+  const reply = completion.choices[0].message.content.trim();
+  console.log(`💬 GPT Reply: ${reply}`);
 
-  // Respond with TTS and prompt for next input
-  const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say({ voice: "Polly.Joanna" }, gptReply);
-
-  twiml.record({
-    transcribe: true,
-    transcribeCallback: "/transcription",
-    maxLength: 10,
-    playBeep: true,
-    trim: "trim-silence",
-  });
+  // Create new TwiML to respond
+  const twiml = new Twilio.twiml.VoiceResponse();
+  twiml.say(
+    {
+      voice: "Polly.Joanna",
+    },
+    reply
+  );
 
   res.type("text/xml");
   res.send(twiml.toString());
 });
 
-const port = process.env.PORT || 10000;
+// Start server
 app.listen(port, () => {
   console.log(`🌐 Server listening on port ${port}`);
 });
