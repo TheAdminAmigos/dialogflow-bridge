@@ -1,81 +1,32 @@
-const express = require("express");
-const bodyParser = require("body-parser");
-const OpenAI = require("openai");
-const twilio = require("twilio");
+import WebSocket, { WebSocketServer } from 'ws';
+import http from 'http';
 
-const app = express();
-app.use(bodyParser.urlencoded({ extended: false }));
+const port = process.env.PORT || 10000;
 
-// Configure OpenAI client (v4+)
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const server = http.createServer();
+const wss = new WebSocketServer({ server });
 
-// Helper to generate GPT reply
-async function generateReply(transcript) {
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
-      {
-        role: "system",
-        content: "You are a helpful assistant answering phone calls for Noah's garden business.",
-      },
-      {
-        role: "user",
-        content: transcript,
-      },
-    ],
+wss.on('connection', (ws) => {
+  console.log('✅ WebSocket connected');
+
+  ws.on('message', (data) => {
+    const msg = JSON.parse(data.toString());
+    if (msg.event === 'start') {
+      console.log('🔹 Start event received');
+    }
+    if (msg.event === 'media') {
+      console.log(`🎙️ Media event – Payload length: ${msg.media.payload.length}`);
+    }
+    if (msg.event === 'stop') {
+      console.log('🔴 Stop event received');
+    }
   });
 
-  return completion.choices[0].message.content.trim();
-}
-
-// Route to handle incoming calls
-app.post("/voice", (req, res) => {
-  console.log("✅ Incoming call...");
-
-  const twiml = new twilio.twiml.VoiceResponse();
-
-  twiml.say(
-    { voice: "Polly.Joanna" },
-    "Hello! This is your virtual assistant. After the beep, please say your message, and I will reply."
-  );
-
-  twiml.record({
-    transcribe: true,
-    transcribeCallback: "/transcription",
-    maxLength: 30,
-    playBeep: true,
-    trim: "trim-silence",
+  ws.on('close', () => {
+    console.log('❎ WebSocket disconnected');
   });
-
-  res.type("text/xml");
-  res.send(twiml.toString());
 });
 
-// Route to handle transcription and reply
-app.post("/transcription", async (req, res) => {
-  console.log("✅ Received transcription callback.");
-  const transcript = req.body.TranscriptionText;
-  console.log(`📝 Transcript: ${transcript}`);
-
-  if (!transcript || transcript.trim() === "") {
-    console.log("⚠️ Empty transcript.");
-    return res.sendStatus(200);
-  }
-
-  const reply = await generateReply(transcript);
-  console.log(`💬 GPT Reply: ${reply}`);
-
-  const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say({ voice: "Polly.Joanna" }, reply);
-
-  res.type("text/xml");
-  res.send(twiml.toString());
-});
-
-// Start the server
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`🌐 Server listening on port ${PORT}`);
+server.listen(port, () => {
+  console.log(`🌐 WebSocket server listening on port ${port}`);
 });
