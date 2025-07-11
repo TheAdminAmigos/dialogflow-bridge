@@ -1,20 +1,19 @@
 const express = require("express");
 const bodyParser = require("body-parser");
-const { Configuration, OpenAIApi } = require("openai");
+const OpenAI = require("openai");
 const twilio = require("twilio");
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
-// Configure OpenAI
-const configuration = new Configuration({
+// Configure OpenAI client (v4+)
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-const openai = new OpenAIApi(configuration);
 
 // Helper to generate GPT reply
 async function generateReply(transcript) {
-  const completion = await openai.createChatCompletion({
+  const completion = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       {
@@ -28,7 +27,7 @@ async function generateReply(transcript) {
     ],
   });
 
-  return completion.data.choices[0].message.content.trim();
+  return completion.choices[0].message.content.trim();
 }
 
 // Route to handle incoming calls
