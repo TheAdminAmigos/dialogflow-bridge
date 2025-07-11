@@ -1,44 +1,44 @@
-// index.js (CommonJS version)
-
 const express = require("express");
 const bodyParser = require("body-parser");
-const { OpenAI } = require("openai");
-const { GoogleAuth } = require("google-auth-library");
-const Twilio = require("twilio");
+const { Configuration, OpenAIApi } = require("openai");
+const twilio = require("twilio");
 
 const app = express();
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.urlencoded({ extended: false }));
 
-const port = process.env.PORT || 10000;
-const openai = new OpenAI({
+// Configure OpenAI
+const configuration = new Configuration({
   apiKey: process.env.OPENAI_API_KEY,
 });
+const openai = new OpenAIApi(configuration);
 
-// Twilio client for call control
-const twilioClient = new Twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
+// Helper to generate GPT reply
+async function generateReply(transcript) {
+  const completion = await openai.createChatCompletion({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content: "You are a helpful assistant answering phone calls for Noah's garden business.",
+      },
+      {
+        role: "user",
+        content: transcript,
+      },
+    ],
+  });
 
-// Google STT auth
-const googleAuth = new GoogleAuth({
-  keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
-  scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-});
+  return completion.data.choices[0].message.content.trim();
+}
 
-// Health check route
-app.get("/", (req, res) => {
-  res.send("✅ Dialogflow Bridge is live!");
-});
-
-// Voice webhook
+// Route to handle incoming calls
 app.post("/voice", (req, res) => {
-  const twiml = new Twilio.twiml.VoiceResponse();
+  console.log("✅ Incoming call...");
+
+  const twiml = new twilio.twiml.VoiceResponse();
+
   twiml.say(
-    {
-      voice: "Polly.Joanna",
-    },
+    { voice: "Polly.Joanna" },
     "Hello! This is your virtual assistant. After the beep, please say your message, and I will reply."
   );
 
@@ -54,7 +54,7 @@ app.post("/voice", (req, res) => {
   res.send(twiml.toString());
 });
 
-// Transcription handler
+// Route to handle transcription and reply
 app.post("/transcription", async (req, res) => {
   console.log("✅ Received transcription callback.");
   const transcript = req.body.TranscriptionText;
@@ -65,35 +65,18 @@ app.post("/transcription", async (req, res) => {
     return res.sendStatus(200);
   }
 
-  // Generate GPT reply
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o",
-    messages: [
-      {
-        role: "system",
-        content: "You are a helpful business assistant answering customer questions.",
-      },
-      { role: "user", content: transcript },
-    ],
-  });
-
-  const reply = completion.choices[0].message.content.trim();
+  const reply = await generateReply(transcript);
   console.log(`💬 GPT Reply: ${reply}`);
 
-  // Create new TwiML to respond
-  const twiml = new Twilio.twiml.VoiceResponse();
-  twiml.say(
-    {
-      voice: "Polly.Joanna",
-    },
-    reply
-  );
+  const twiml = new twilio.twiml.VoiceResponse();
+  twiml.say({ voice: "Polly.Joanna" }, reply);
 
   res.type("text/xml");
   res.send(twiml.toString());
 });
 
-// Start server
-app.listen(port, () => {
-  console.log(`🌐 Server listening on port ${port}`);
+// Start the server
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`🌐 Server listening on port ${PORT}`);
 });
