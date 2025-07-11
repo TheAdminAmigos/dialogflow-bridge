@@ -17,13 +17,15 @@ app.post("/voice", (req, res) => {
 
   const response = xml([
     { Response: [
+      { Say: "Please hold while we connect you." },
       { Start: [
         { Stream: [
           { _attr: {
             url: `wss://${req.headers.host}/media`
           }}
         ]}
-      ]}
+      ]},
+      { Pause: [{ _attr: { length: "60" } }] }
     ]}
   ]);
 
