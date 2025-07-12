@@ -10,16 +10,15 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
- "dependencies": {
-  "@google-cloud/dialogflow": "^4.5.0",
-  "@google-cloud/speech": "^4.5.0",
-  "openai": "^4.27.0",
-  "dotenv": "^16.0.3",
-  "express": "^4.19.2",
-  "uuid": "^9.0.0",
-  "ws": "^8.0.0",
-  "twilio": "^4.19.0",
-  "xml": "^1.0.1"
-}
-
+  "dependencies": {
+    "@google-cloud/dialogflow": "^4.5.0",
+    "@google-cloud/speech": "^4.5.0",
+    "openai": "^4.27.0",
+    "dotenv": "^16.0.3",
+    "express": "^4.19.2",
+    "uuid": "^9.0.0",
+    "ws": "^8.0.0",
+    "twilio": "^4.19.0",
+    "xml": "^1.0.1"
+  }
 }
