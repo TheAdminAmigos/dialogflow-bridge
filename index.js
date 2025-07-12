@@ -1,29 +1,22 @@
 import express from "express";
 import xml from "xml";
 import OpenAI from "openai";
-import twilio from "twilio";
+import pkg from "twilio";
+const { Twilio } = pkg;
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
-
 const openai = new OpenAI();
-const client = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
+const client = new Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 const PORT = 10000;
+const MAX_NO_INPUTS = 3;
+const activeCalls = new Map();
 
-// Initial greeting
 const initialGreeting = "Hello, Silver Birch Landscaping and Gardening. How can I help you?";
-
-// Filler while GPT responds
 const fillerPrompt = "One moment please...";
+const goodbyeMessage = "Thank you for calling. Have a lovely day!";
 
-// Fallback goodbye
-const goodbyePrompt = "Thank you, one of the team will be in touch shortly. Have a lovely day!";
-
-// Build TwiML <Say>
 const buildSay = (text) => ({
   Say: {
     _attr: { voice: "Polly.Emma-Neural" },
@@ -31,69 +24,69 @@ const buildSay = (text) => ({
   },
 });
 
-// POST /voice – answer call
+const buildGather = (prompt) => ({
+  Gather: {
+    _attr: {
+      input: "speech",
+      action: "/gather",
+      language: "en-GB",
+      timeout: "10",
+      speechTimeout: "auto",
+    },
+    Say: {
+      _attr: { voice: "Polly.Emma-Neural" },
+      _cdata: prompt,
+    },
+  },
+});
+
+// Answer incoming calls
 app.post("/voice", (req, res) => {
   console.log("📞 Incoming call");
+  activeCalls.set(req.body.CallSid, { noInputCount: 0 });
 
   const twiml = xml(
-    {
-      Response: [
-        buildSay(initialGreeting),
-        {
-          Gather: {
-            _attr: {
-              input: "speech",
-              action: "/gather",
-              language: "en-GB",
-              timeout: "2",
-              speechTimeout: "auto",
-            },
-          },
-        },
-      ],
-    },
+    { Response: [buildGather(initialGreeting)] },
     { declaration: true }
   );
-
   res.type("text/xml").send(twiml);
 });
 
-// POST /gather – handle user speech
+// Handle user speech
 app.post("/gather", async (req, res) => {
-  const transcript = req.body.SpeechResult || "";
   const callSid = req.body.CallSid;
-  console.log(`🗣️ User said: "${transcript}"`);
+  const transcript = req.body.SpeechResult?.trim();
+  const callData = activeCalls.get(callSid) || { noInputCount: 0 };
 
   if (!transcript) {
-    // If nothing heard, re-gather
+    callData.noInputCount += 1;
+    activeCalls.set(callSid, callData);
+
+    if (callData.noInputCount >= MAX_NO_INPUTS) {
+      console.log("👋 No input too many times, ending call.");
+      const twiml = xml(
+        { Response: [buildSay(goodbyeMessage)] },
+        { declaration: true }
+      );
+      return res.type("text/xml").send(twiml);
+    }
+
+    console.log("🤷 No input detected, reprompting.");
     const twiml = xml(
-      {
-        Response: [
-          buildSay("Sorry, I didn't catch that. Could you please repeat?"),
-          {
-            Gather: {
-              _attr: {
-                input: "speech",
-                action: "/gather",
-                language: "en-GB",
-                timeout: "2",
-                speechTimeout: "auto",
-              },
-            },
-          },
-        ],
-      },
+      { Response: [buildGather("Sorry, I didn’t catch that. Could you please repeat?")] },
       { declaration: true }
     );
     return res.type("text/xml").send(twiml);
   }
 
-  // Respond immediately with filler so Twilio doesn't time out
-  const fillerTwiml = xml(
-    { Response: [buildSay(fillerPrompt)] },
+  console.log(`🗣️ User said: "${transcript}"`);
+
+  // Play filler prompt + Gather to keep call alive
+  const twiml = xml(
+    { Response: [buildGather(fillerPrompt)] },
     { declaration: true }
   );
-  res.type("text/xml").send(fillerTwiml);
+  res.type("text/xml").send(twiml);
 
   try {
     const completion = await openai.chat.completions.create({
@@ -103,7 +96,7 @@ app.post("/gather", async (req, res) => {
         {
           role: "system",
           content:
-            "You are a polite UK receptionist for Silver Birch Landscaping and Gardening. If the user asks about services not offered, suggest taking their contact details so the team can follow up.",
+            "You are a polite UK receptionist for Silver Birch Landscaping and Gardening. If the question is about a service you don’t offer, ask for the caller’s contact details so the team can follow up. Keep replies under 2 sentences.",
         },
         { role: "user", content: transcript },
       ],
@@ -115,53 +108,26 @@ app.post("/gather", async (req, res) => {
 
     console.log(`🤖 GPT Response: "${reply}"`);
 
-    // If GPT says we don't offer this, override with lead capture message
-    if (
-      reply.includes("don't offer") ||
-      reply.includes("do not offer") ||
-      reply.includes("unfortunately we don't") ||
-      reply.includes("unfortunately, we don't")
-    ) {
-      reply =
-        "I’m sorry, I'm not sure whether that is something we normally offer, but I’d love to get one of the team to contact you. What's your name and phone number please?";
-    }
-
-    // Inject TwiML mid-call
-    const twiml = xml(
-      {
-        Response: [
-          buildSay(reply),
-          {
-            Gather: {
-              _attr: {
-                input: "speech",
-                action: "/gather",
-                language: "en-GB",
-                timeout: "2",
-                speechTimeout: "auto",
-              },
-            },
-          },
-        ],
-      },
-      { declaration: true }
-    );
-
+    // Post TwiML to the active call
     await client.calls(callSid).update({
-      twiml,
+      twiml: xml(
+        { Response: [buildGather(reply)] },
+        { declaration: true }
+      ),
     });
   } catch (err) {
     console.error("❌ GPT or Twilio Update Error:", err);
 
-    // Fallback: end politely
-    const fallbackTwiml = xml(
-      { Response: [buildSay(goodbyePrompt)] },
-      { declaration: true }
-    );
-
     try {
       await client.calls(callSid).update({
-        twiml: fallbackTwiml,
+        twiml: xml(
+          {
+            Response: [
+              buildSay("I'm sorry, something went wrong. Please call again later."),
+            ],
+          },
+          { declaration: true }
+        ),
       });
     } catch (fallbackErr) {
       console.error("❌ Fallback Injection Error:", fallbackErr);
