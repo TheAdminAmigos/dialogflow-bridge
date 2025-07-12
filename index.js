@@ -1,3 +1,4 @@
+// index.js
 import express from "express";
 import xml from "xml";
 import OpenAI from "openai";
@@ -6,16 +7,12 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 
 const openai = new OpenAI();
-
 const PORT = 10000;
 
-// Initial answer message
-const initialGreeting = "Hello, Silver Birch Landscaping and Gardening. How can I help you?";
-
-// Friendly filler
+const greeting = "Hello, Silver Birch Landscaping and Gardening. How can I help you?";
 const fillerPrompt = "One moment please...";
 
-// Function to generate TwiML
+// Helper to build <Say>
 const buildSay = (text) => ({
   Say: {
     _attr: { voice: "Polly.Emma-Neural" },
@@ -30,7 +27,7 @@ app.post("/voice", (req, res) => {
   const twiml = xml(
     {
       Response: [
-        buildSay(initialGreeting),
+        buildSay(greeting),
         {
           Gather: {
             _attr: {
@@ -57,7 +54,6 @@ app.post("/gather", async (req, res) => {
   console.log(`🗣️ User said: "${transcript}"`);
 
   if (!transcript) {
-    // If nothing heard, re-prompt
     const twiml = xml(
       {
         Response: [
@@ -81,17 +77,29 @@ app.post("/gather", async (req, res) => {
     return res.type("text/xml").send(twiml);
   }
 
-  // Immediately acknowledge while GPT is thinking
+  // Play filler prompt first
   const fillerTwiml = xml(
     {
-      Response: [buildSay(fillerPrompt)],
+      Response: [
+        buildSay(fillerPrompt),
+        {
+          Redirect: {
+            _cdata: "/respond?text=" + encodeURIComponent(transcript),
+          },
+        },
+      ],
     },
     { declaration: true }
   );
 
   res.type("text/xml").send(fillerTwiml);
+});
 
-  // Generate GPT response asynchronously
+// 🎯 Endpoint: Generate GPT response and re-gather
+app.post("/respond", async (req, res) => {
+  const transcript = req.query.text || "";
+  console.log(`⚡ Generating GPT reply for: "${transcript}"`);
+
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
@@ -112,8 +120,7 @@ app.post("/gather", async (req, res) => {
 
     console.log(`🤖 GPT Response: "${reply}"`);
 
-    // Build TwiML to reply and re-gather
-    const responseTwiml = xml(
+    const twiml = xml(
       {
         Response: [
           buildSay(reply),
@@ -134,12 +141,32 @@ app.post("/gather", async (req, res) => {
       { declaration: true }
     );
 
-    // Post response to Twilio (you can't respond again via HTTP)
-    // Instead, use Twilio's REST API to send the response mid-call if needed.
-    // Otherwise, the filler message is spoken, and user can re-prompt.
-    // For simplicity here, you can consider logging the reply or extending the architecture later.
+    res.type("text/xml").send(twiml);
   } catch (err) {
     console.error("❌ GPT Error:", err);
+
+    const errorTwiml = xml(
+      {
+        Response: [
+          buildSay("Sorry, there was a problem. Could you please repeat that?"),
+          {
+            Gather: {
+              _attr: {
+                input: "speech",
+                action: "/gather",
+                language: "en-GB",
+                timeout: "1",
+                speechTimeout: "auto",
+                enhanced: "true",
+              },
+            },
+          },
+        ],
+      },
+      { declaration: true }
+    );
+
+    res.type("text/xml").send(errorTwiml);
   }
 });
 
