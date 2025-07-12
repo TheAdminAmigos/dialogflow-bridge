@@ -1,27 +1,19 @@
 import express from "express";
 import xml from "xml";
 import OpenAI from "openai";
-import twilio from "twilio";
+import { Twilio } from "twilio";
+import dotenv from "dotenv";
+dotenv.config();
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
-
 const openai = new OpenAI();
-const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-
+const twilio = new Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 const PORT = 10000;
 
-// Initial answer message
 const initialGreeting = "Hello, Silver Birch Landscaping and Gardening. How can I help you?";
-
-// Friendly filler
 const fillerPrompt = "One moment please...";
 
-// Goodbye messages
-const goodbyeQuote = "Thank you! One of the team will be in touch shortly to arrange your quote. Have a lovely day.";
-const goodbyeGeneric = "Thank you! One of the team will be in touch shortly. Have a lovely day.";
-
-// Helper to build <Say>
 const buildSay = (text) => ({
   Say: {
     _attr: { voice: "Polly.Emma-Neural" },
@@ -29,7 +21,19 @@ const buildSay = (text) => ({
   },
 });
 
-// 🎯 Endpoint: Answer the call
+const buildGather = (prompt) => ({
+  Gather: {
+    _attr: {
+      input: "speech",
+      action: "/gather",
+      language: "en-GB",
+      timeout: "3",
+      speechTimeout: "auto",
+    },
+    _cdata: prompt || "",
+  },
+});
+
 app.post("/voice", (req, res) => {
   console.log("📞 Incoming call");
 
@@ -37,17 +41,7 @@ app.post("/voice", (req, res) => {
     {
       Response: [
         buildSay(initialGreeting),
-        {
-          Gather: {
-            _attr: {
-              input: "speech",
-              action: "/gather",
-              language: "en-GB",
-              timeout: "2",
-              speechTimeout: "auto",
-            },
-          },
-        },
+        buildGather(""),
       ],
     },
     { declaration: true }
@@ -56,30 +50,17 @@ app.post("/voice", (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-// 🎯 Endpoint: Handle Gathered Speech
 app.post("/gather", async (req, res) => {
-  const transcriptRaw = req.body.SpeechResult || "";
-  const transcript = transcriptRaw.toLowerCase();
+  const transcript = req.body.SpeechResult || "";
   const callSid = req.body.CallSid;
+  console.log(`🗣️ User said: "${transcript}"`);
 
-  console.log(`🗣️ User said: "${transcriptRaw}"`);
-
-  if (!transcriptRaw) {
+  if (!transcript) {
     const twiml = xml(
       {
         Response: [
           buildSay("Sorry, I didn't hear anything. Could you please repeat that?"),
-          {
-            Gather: {
-              _attr: {
-                input: "speech",
-                action: "/gather",
-                language: "en-GB",
-                timeout: "2",
-                speechTimeout: "auto",
-              },
-            },
-          },
+          buildGather(""),
         ],
       },
       { declaration: true }
@@ -87,9 +68,14 @@ app.post("/gather", async (req, res) => {
     return res.type("text/xml").send(twiml);
   }
 
-  // Immediately acknowledge
+  // Immediately acknowledge while GPT processes
   const fillerTwiml = xml(
-    { Response: [buildSay(fillerPrompt)] },
+    {
+      Response: [
+        buildSay(fillerPrompt),
+        buildGather(""),
+      ],
+    },
     { declaration: true }
   );
   res.type("text/xml").send(fillerTwiml);
@@ -101,62 +87,43 @@ app.post("/gather", async (req, res) => {
       messages: [
         {
           role: "system",
-          content: "You are a polite UK receptionist for Silver Birch Landscaping and Gardening. Answer briefly and helpfully.",
+          content:
+            "You are a polite UK receptionist for Silver Birch Landscaping and Gardening. Answer briefly and helpfully.",
         },
-        { role: "user", content: transcriptRaw },
+        { role: "user", content: transcript },
       ],
     });
 
-    const gptReply = completion.choices[0].message?.content?.trim() || "I'm sorry, I didn't quite catch that.";
-    console.log(`🤖 GPT Response: "${gptReply}"`);
+    let reply =
+      completion.choices[0].message?.content?.trim() ||
+      "I'm sorry, I didn't quite catch that.";
 
-    // Decide whether to say goodbye or re-prompt
-    let finalText;
-    if (transcript.includes("quote") || transcript.includes("price")) {
-      finalText = goodbyeQuote;
-    } else if (
-      transcript.includes("phone number") ||
-      transcript.includes("address") ||
-      transcript.includes("contact details")
-    ) {
-      finalText = goodbyeGeneric;
-    } else {
-      finalText = gptReply;
+    console.log(`🤖 GPT Response: "${reply}"`);
+
+    // Check if GPT response mentions no service
+    if (reply.toLowerCase().includes("we don’t offer") || reply.toLowerCase().includes("we don't offer") || reply.toLowerCase().includes("unfortunately we don’t") || reply.toLowerCase().includes("unfortunately we don't")) {
+      reply =
+        "I’m sorry, I'm not sure whether that is something we normally offer, but I’d love to get one of the team to get in touch and let you know. What's your name and phone number please?";
     }
-
-    // Build TwiML to say final text (or re-prompt if not goodbye)
-    const isGoodbye = finalText === goodbyeQuote || finalText === goodbyeGeneric;
 
     const responseTwiml = xml(
       {
-        Response: isGoodbye
-          ? [buildSay(finalText)]
-          : [
-              buildSay(finalText),
-              {
-                Gather: {
-                  _attr: {
-                    input: "speech",
-                    action: "/gather",
-                    language: "en-GB",
-                    timeout: "2",
-                    speechTimeout: "auto",
-                  },
-                },
-              },
-            ],
+        Response: [
+          buildSay(reply),
+          buildGather(""),
+        ],
       },
       { declaration: true }
     );
 
     // Inject TwiML mid-call
-    await client.calls(callSid).update({ twiml: responseTwiml });
+    await twilio.calls(callSid).update({ twiml: responseTwiml });
+
   } catch (err) {
     console.error("❌ GPT or Twilio Update Error:", err);
   }
 });
 
-// Start server
 app.listen(PORT, () => {
   console.log(`🌐 Server listening on port ${PORT}`);
 });
