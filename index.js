@@ -2,20 +2,18 @@ import express from "express";
 import xml from "xml";
 import OpenAI from "openai";
 import pkg from "twilio";
-
 const { Twilio } = pkg;
+
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 
 const openai = new OpenAI();
-
-const twilioClient = new Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const client = new Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 const PORT = 10000;
-
 const initialGreeting = "Hello, Silver Birch Landscaping and Gardening. How can I help you?";
 const fillerPrompt = "One moment please...";
-const goodbyeMessage = "Thank you! One of our team will be in touch shortly. Have a lovely day.";
+const goodbyePrompt = "Thank you so much for calling. Have a wonderful day!";
 
 const buildSay = (text) => ({
   Say: {
@@ -24,7 +22,7 @@ const buildSay = (text) => ({
   },
 });
 
-// 🎯 Answer the call
+// Initial answer
 app.post("/voice", (req, res) => {
   console.log("📞 Incoming call - sending initial greeting immediately.");
 
@@ -38,7 +36,7 @@ app.post("/voice", (req, res) => {
               input: "speech",
               action: "/gather",
               language: "en-GB",
-              timeout: "2",
+              timeout: "5",
               speechTimeout: "auto",
             },
           },
@@ -48,15 +46,14 @@ app.post("/voice", (req, res) => {
     { declaration: true }
   );
 
-  res
-    .type("text/xml")
-    .set("Connection", "keep-alive")
-    .send(twiml);
+  res.type("text/xml").send(twiml);
 });
 
-// 🎯 Handle Gathered Speech
+// Handle Gather
 app.post("/gather", async (req, res) => {
-  const transcript = req.body.SpeechResult?.trim() || "";
+  const transcript = req.body.SpeechResult || "";
+  const callSid = req.body.CallSid;
+
   console.log(`🗣️ User said: "${transcript}"`);
 
   if (!transcript) {
@@ -70,7 +67,7 @@ app.post("/gather", async (req, res) => {
                 input: "speech",
                 action: "/gather",
                 language: "en-GB",
-                timeout: "2",
+                timeout: "5",
                 speechTimeout: "auto",
               },
             },
@@ -82,14 +79,13 @@ app.post("/gather", async (req, res) => {
     return res.type("text/xml").send(twiml);
   }
 
-  // Immediately reply with filler
+  // Send filler response while GPT is thinking
   const fillerTwiml = xml(
     { Response: [buildSay(fillerPrompt)] },
     { declaration: true }
   );
   res.type("text/xml").send(fillerTwiml);
 
-  // Process GPT asynchronously
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
@@ -98,17 +94,16 @@ app.post("/gather", async (req, res) => {
         {
           role: "system",
           content:
-            "You are a helpful UK receptionist for Silver Birch Landscaping and Gardening. Answer politely, briefly, and if the user asks about a service you don't offer, ask for their contact details so the team can follow up.",
+            "You are a polite UK receptionist for Silver Birch Landscaping and Gardening. Answer briefly and helpfully. If asked about something you don’t offer, ask for contact details to pass along.",
         },
         { role: "user", content: transcript },
       ],
     });
 
-    const reply = completion.choices[0].message?.content?.trim() || goodbyeMessage;
+    const reply = completion.choices[0].message?.content?.trim() || goodbyePrompt;
     console.log(`🤖 GPT Response: "${reply}"`);
 
-    // Build follow-up TwiML
-    const twimlResponse = xml(
+    const responseTwiml = xml(
       {
         Response: [
           buildSay(reply),
@@ -118,7 +113,7 @@ app.post("/gather", async (req, res) => {
                 input: "speech",
                 action: "/gather",
                 language: "en-GB",
-                timeout: "6",
+                timeout: "5",
                 speechTimeout: "auto",
               },
             },
@@ -128,30 +123,41 @@ app.post("/gather", async (req, res) => {
       { declaration: true }
     );
 
-    // Try to inject TwiML mid-call
-    const callSid = req.body.CallSid;
+    // Try to inject response
     try {
-      await twilioClient.calls(callSid).update({
-        twiml: twimlResponse,
-      });
+      await client.calls(callSid).update({ twiml: responseTwiml });
       console.log("✅ Injected follow-up TwiML successfully.");
-    } catch (err) {
-      console.error("❌ Injection Error:", err);
+    } catch (error) {
+      console.error("❌ Injection Error:", error);
 
-      // Fallback: End call with goodbye
-      await twilioClient.calls(callSid).update({
-        twiml: xml(
-          { Response: [buildSay(goodbyeMessage)] },
-          { declaration: true }
-        ),
-      });
+      if (error.code === 21220) {
+        console.log("🔄 Retrying injection after 0.5s...");
+        setTimeout(async () => {
+          try {
+            await client.calls(callSid).update({ twiml: responseTwiml });
+            console.log("✅ Retry succeeded.");
+          } catch (retryError) {
+            console.error("❌ Retry injection failed:", retryError);
+          }
+        }, 500);
+      }
     }
   } catch (err) {
     console.error("❌ GPT Processing Error:", err);
+
+    const fallbackTwiml = xml(
+      { Response: [buildSay("I'm sorry, something went wrong. Please call back later.")] },
+      { declaration: true }
+    );
+
+    try {
+      await client.calls(callSid).update({ twiml: fallbackTwiml });
+    } catch (fallbackError) {
+      console.error("❌ Fallback injection failed:", fallbackError);
+    }
   }
 });
 
-// Start server
 app.listen(PORT, () => {
   console.log(`🌐 Server listening on port ${PORT}`);
 });
