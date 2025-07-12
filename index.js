@@ -1,24 +1,23 @@
 import express from "express";
 import xml from "xml";
 import OpenAI from "openai";
+import Twilio from "twilio";
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 
 const openai = new OpenAI();
+const twilioClient = Twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
 
 const PORT = 10000;
 
-// Initial greeting
 const initialGreeting = "Hello, Silver Birch Landscaping and Gardening. How can I help you?";
-
-// Longer friendly filler
-const longFiller = "Alright, thanks—let me just open my system so I can check that for you. One moment.";
-
-// Fallback if GPT slow
+const fillerPrompt = "One moment please...";
 const fallbackPrompt = "Sorry for the wait—modern technology is great until you're trying to be quick, lol!";
 
-// Build TwiML snippet
 const buildSay = (text) => ({
   Say: {
     _attr: { voice: "Polly.Emma-Neural" },
@@ -26,10 +25,8 @@ const buildSay = (text) => ({
   },
 });
 
-// 🎯 Answer the call
+// 🎯 Endpoint: Answer the call
 app.post("/voice", (req, res) => {
-  console.log("📞 Incoming call");
-
   const twiml = xml(
     {
       Response: [
@@ -42,7 +39,6 @@ app.post("/voice", (req, res) => {
               language: "en-GB",
               timeout: "2",
               speechTimeout: "auto",
-              enhanced: "true",
             },
           },
         },
@@ -50,22 +46,53 @@ app.post("/voice", (req, res) => {
     },
     { declaration: true }
   );
-
   res.type("text/xml").send(twiml);
 });
 
-// 🎯 Handle Gathered Speech
+// 🎯 Endpoint: Handle Gathered Speech
 app.post("/gather", async (req, res) => {
   const transcript = req.body.SpeechResult || "";
+  const callSid = req.body.CallSid;
+
   console.log(`🗣️ User said: "${transcript}"`);
 
-  // Track if GPT has responded
-  let gptReply = null;
-  let gptDone = false;
+  if (!transcript) {
+    // Nothing heard—re-prompt
+    const twiml = xml(
+      {
+        Response: [
+          buildSay("Sorry, I didn't hear anything. Could you please repeat that?"),
+          {
+            Gather: {
+              _attr: {
+                input: "speech",
+                action: "/gather",
+                language: "en-GB",
+                timeout: "2",
+                speechTimeout: "auto",
+              },
+            },
+          },
+        ],
+      },
+      { declaration: true }
+    );
+    return res.type("text/xml").send(twiml);
+  }
 
-  // Start GPT generation in the background
-  const gptPromise = openai.chat.completions
-    .create({
+  // Respond immediately with filler so the call doesn't time out
+  const fillerTwiml = xml(
+    {
+      Response: [buildSay(fillerPrompt)],
+    },
+    { declaration: true }
+  );
+
+  res.type("text/xml").send(fillerTwiml);
+
+  try {
+    // Generate GPT reply
+    const completion = await openai.chat.completions.create({
       model: "gpt-4o",
       temperature: 0.2,
       messages: [
@@ -76,112 +103,71 @@ app.post("/gather", async (req, res) => {
         },
         { role: "user", content: transcript },
       ],
-    })
-    .then((completion) => {
-      gptReply =
-        completion.choices[0].message?.content?.trim() ||
-        "I'm sorry, I didn't quite catch that.";
-      gptDone = true;
-      console.log(`🤖 GPT Response: "${gptReply}"`);
-    })
-    .catch((err) => {
-      console.error("❌ GPT Error:", err);
-      gptReply =
-        "I'm sorry, there was an issue understanding that. Could you please repeat?";
-      gptDone = true;
     });
 
-  // Immediately send the longer filler
-  const fillerTwiml = xml(
-    {
-      Response: [
-        buildSay(longFiller),
+    const reply =
+      completion.choices[0].message?.content?.trim() ||
+      "I'm sorry, I didn't quite catch that.";
+
+    console.log(`🤖 GPT Response: "${reply}"`);
+
+    // Inject the reply mid-call using Twilio REST API
+    await twilioClient.calls(callSid).update({
+      twiml: xml(
         {
-          Gather: {
-            _attr: {
-              input: "speech",
-              action: "/followup",
-              language: "en-GB",
-              timeout: "3",
-              speechTimeout: "auto",
-              enhanced: "true",
+          Response: [
+            buildSay(reply),
+            {
+              Gather: {
+                _attr: {
+                  input: "speech",
+                  action: "/gather",
+                  language: "en-GB",
+                  timeout: "2",
+                  speechTimeout: "auto",
+                },
+              },
             },
-          },
+          ],
         },
-      ],
-    },
-    { declaration: true }
-  );
+        { declaration: true }
+      ),
+    });
 
-  res.type("text/xml").send(fillerTwiml);
+    console.log("✅ TwiML injected successfully.");
+  } catch (err) {
+    console.error("❌ GPT or Twilio Update Error:", err);
 
-  // Wait up to 3 seconds for GPT
-  await Promise.race([
-    gptPromise,
-    new Promise((resolve) => setTimeout(resolve, 3000)),
-  ]);
-
-  // Nothing else to do—user will re-trigger /followup
-});
-
-// 🎯 Handle follow-up Gather
-app.post("/followup", async (req, res) => {
-  const transcript = req.body.SpeechResult || "";
-  console.log(`🗣️ Follow-up user said: "${transcript}"`);
-
-  // Check if GPT had finished during the filler
-  if (typeof gptReply === "string" && gptReply.trim()) {
-    // Speak GPT reply + re-gather
-    const twiml = xml(
-      {
-        Response: [
-          buildSay(gptReply),
+    // Fallback: inject friendly re-gather prompt
+    try {
+      await twilioClient.calls(callSid).update({
+        twiml: xml(
           {
-            Gather: {
-              _attr: {
-                input: "speech",
-                action: "/gather",
-                language: "en-GB",
-                timeout: "2",
-                speechTimeout: "auto",
-                enhanced: "true",
+            Response: [
+              buildSay(fallbackPrompt),
+              {
+                Gather: {
+                  _attr: {
+                    input: "speech",
+                    action: "/gather",
+                    language: "en-GB",
+                    timeout: "2",
+                    speechTimeout: "auto",
+                  },
+                },
               },
-            },
+            ],
           },
-        ],
-      },
-      { declaration: true }
-    );
-
-    res.type("text/xml").send(twiml);
-  } else {
-    // GPT still not done—use fallback
-    const twiml = xml(
-      {
-        Response: [
-          buildSay(fallbackPrompt),
-          {
-            Gather: {
-              _attr: {
-                input: "speech",
-                action: "/gather",
-                language: "en-GB",
-                timeout: "2",
-                speechTimeout: "auto",
-                enhanced: "true",
-              },
-            },
-          },
-        ],
-      },
-      { declaration: true }
-    );
-
-    res.type("text/xml").send(twiml);
+          { declaration: true }
+        ),
+      });
+      console.log("✅ Fallback TwiML injected successfully.");
+    } catch (fallbackErr) {
+      console.error("❌ Fallback Injection Error:", fallbackErr);
+    }
   }
 });
 
-// Start server
 app.listen(PORT, () => {
   console.log(`🌐 Server listening on port ${PORT}`);
 });
