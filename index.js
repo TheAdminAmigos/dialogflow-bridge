@@ -1,24 +1,27 @@
-// Option A – Final Stable Turn-Based Bot
-// Clean Gather + Response Loop Only
-
 import express from "express";
 import xml from "xml";
 import OpenAI from "openai";
+import twilio from "twilio";
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 
 const openai = new OpenAI();
+const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 const PORT = 10000;
 
-// Initial greeting
+// Initial answer message
 const initialGreeting = "Hello, Silver Birch Landscaping and Gardening. How can I help you?";
 
-// Fallback prompt
-const fallbackPrompt = "Sorry for the wait—modern technology is great until you're trying to be quick lol! Could you please repeat that?";
+// Friendly filler
+const fillerPrompt = "One moment please...";
 
-// Build Say TwiML
+// Goodbye messages
+const goodbyeQuote = "Thank you! One of the team will be in touch shortly to arrange your quote. Have a lovely day.";
+const goodbyeGeneric = "Thank you! One of the team will be in touch shortly. Have a lovely day.";
+
+// Helper to build <Say>
 const buildSay = (text) => ({
   Say: {
     _attr: { voice: "Polly.Emma-Neural" },
@@ -55,15 +58,17 @@ app.post("/voice", (req, res) => {
 
 // 🎯 Endpoint: Handle Gathered Speech
 app.post("/gather", async (req, res) => {
-  const transcript = req.body.SpeechResult || "";
-  console.log(`🗣️ User said: \"${transcript}\"`);
+  const transcriptRaw = req.body.SpeechResult || "";
+  const transcript = transcriptRaw.toLowerCase();
+  const callSid = req.body.CallSid;
 
-  if (!transcript) {
-    // Re-prompt if nothing heard
+  console.log(`🗣️ User said: "${transcriptRaw}"`);
+
+  if (!transcriptRaw) {
     const twiml = xml(
       {
         Response: [
-          buildSay(fallbackPrompt),
+          buildSay("Sorry, I didn't hear anything. Could you please repeat that?"),
           {
             Gather: {
               _attr: {
@@ -82,6 +87,13 @@ app.post("/gather", async (req, res) => {
     return res.type("text/xml").send(twiml);
   }
 
+  // Immediately acknowledge
+  const fillerTwiml = xml(
+    { Response: [buildSay(fillerPrompt)] },
+    { declaration: true }
+  );
+  res.type("text/xml").send(fillerTwiml);
+
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
@@ -89,65 +101,58 @@ app.post("/gather", async (req, res) => {
       messages: [
         {
           role: "system",
-          content:
-            "You are a polite UK receptionist for Silver Birch Landscaping and Gardening. Answer briefly and helpfully.",
+          content: "You are a polite UK receptionist for Silver Birch Landscaping and Gardening. Answer briefly and helpfully.",
         },
-        { role: "user", content: transcript },
+        { role: "user", content: transcriptRaw },
       ],
     });
 
-    const reply =
-      completion.choices[0].message?.content?.trim() ||
-      "I'm sorry, I didn't quite catch that.";
+    const gptReply = completion.choices[0].message?.content?.trim() || "I'm sorry, I didn't quite catch that.";
+    console.log(`🤖 GPT Response: "${gptReply}"`);
 
-    console.log(`🤖 GPT Response: \"${reply}\"`);
+    // Decide whether to say goodbye or re-prompt
+    let finalText;
+    if (transcript.includes("quote") || transcript.includes("price")) {
+      finalText = goodbyeQuote;
+    } else if (
+      transcript.includes("phone number") ||
+      transcript.includes("address") ||
+      transcript.includes("contact details")
+    ) {
+      finalText = goodbyeGeneric;
+    } else {
+      finalText = gptReply;
+    }
 
-    // Build TwiML reply
+    // Build TwiML to say final text (or re-prompt if not goodbye)
+    const isGoodbye = finalText === goodbyeQuote || finalText === goodbyeGeneric;
+
     const responseTwiml = xml(
       {
-        Response: [
-          buildSay(reply),
-          {
-            Gather: {
-              _attr: {
-                input: "speech",
-                action: "/gather",
-                language: "en-GB",
-                timeout: "2",
-                speechTimeout: "auto",
+        Response: isGoodbye
+          ? [buildSay(finalText)]
+          : [
+              buildSay(finalText),
+              {
+                Gather: {
+                  _attr: {
+                    input: "speech",
+                    action: "/gather",
+                    language: "en-GB",
+                    timeout: "2",
+                    speechTimeout: "auto",
+                  },
+                },
               },
-            },
-          },
-        ],
+            ],
       },
       { declaration: true }
     );
 
-    res.type("text/xml").send(responseTwiml);
+    // Inject TwiML mid-call
+    await client.calls(callSid).update({ twiml: responseTwiml });
   } catch (err) {
-    console.error("❌ GPT Error:", err);
-
-    const errorTwiml = xml(
-      {
-        Response: [
-          buildSay("I'm sorry, something went wrong. Could you please say that again?"),
-          {
-            Gather: {
-              _attr: {
-                input: "speech",
-                action: "/gather",
-                language: "en-GB",
-                timeout: "2",
-                speechTimeout: "auto",
-              },
-            },
-          },
-        ],
-      },
-      { declaration: true }
-    );
-
-    res.type("text/xml").send(errorTwiml);
+    console.error("❌ GPT or Twilio Update Error:", err);
   }
 });
 
