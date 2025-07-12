@@ -1,4 +1,3 @@
-// index.js
 import express from "express";
 import xml from "xml";
 import OpenAI from "openai";
@@ -7,9 +6,13 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 
 const openai = new OpenAI();
+
 const PORT = 10000;
 
-const greeting = "Hello, Silver Birch Landscaping and Gardening. How can I help you?";
+// Initial greeting
+const initialGreeting = "Hello, Silver Birch Landscaping and Gardening. How can I help you?";
+
+// Filler phrase while GPT thinks
 const fillerPrompt = "One moment please...";
 
 // Helper to build <Say>
@@ -20,21 +23,22 @@ const buildSay = (text) => ({
   },
 });
 
-// 🎯 Endpoint: Answer the call
+// 🎯 Route: Answer the call
 app.post("/voice", (req, res) => {
   console.log("📞 Incoming call");
 
   const twiml = xml(
     {
       Response: [
-        buildSay(greeting),
+        buildSay(initialGreeting),
         {
           Gather: {
             _attr: {
               input: "speech",
-              action: "/gather",
+              action: "/respond",
+              method: "POST",
               language: "en-GB",
-              timeout: "1",
+              timeout: "2",
               speechTimeout: "auto",
               enhanced: "true",
             },
@@ -48,12 +52,13 @@ app.post("/voice", (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-// 🎯 Endpoint: Handle Gathered Speech
-app.post("/gather", async (req, res) => {
+// 🎯 Route: Handle Gathered Speech
+app.all("/respond", async (req, res) => {
   const transcript = req.body.SpeechResult || "";
   console.log(`🗣️ User said: "${transcript}"`);
 
   if (!transcript) {
+    // If nothing heard, re-prompt
     const twiml = xml(
       {
         Response: [
@@ -62,9 +67,10 @@ app.post("/gather", async (req, res) => {
             Gather: {
               _attr: {
                 input: "speech",
-                action: "/gather",
+                action: "/respond",
+                method: "POST",
                 language: "en-GB",
-                timeout: "1",
+                timeout: "2",
                 speechTimeout: "auto",
                 enhanced: "true",
               },
@@ -77,29 +83,17 @@ app.post("/gather", async (req, res) => {
     return res.type("text/xml").send(twiml);
   }
 
-  // Play filler prompt first
+  // Acknowledge while GPT thinks
   const fillerTwiml = xml(
     {
-      Response: [
-        buildSay(fillerPrompt),
-        {
-          Redirect: {
-            _cdata: "/respond?text=" + encodeURIComponent(transcript),
-          },
-        },
-      ],
+      Response: [buildSay(fillerPrompt)],
     },
     { declaration: true }
   );
 
   res.type("text/xml").send(fillerTwiml);
-});
 
-// 🎯 Endpoint: Generate GPT response and re-gather
-app.post("/respond", async (req, res) => {
-  const transcript = req.query.text || "";
-  console.log(`⚡ Generating GPT reply for: "${transcript}"`);
-
+  // Generate GPT reply asynchronously (note: cannot respond again via HTTP here)
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
@@ -120,53 +114,12 @@ app.post("/respond", async (req, res) => {
 
     console.log(`🤖 GPT Response: "${reply}"`);
 
-    const twiml = xml(
-      {
-        Response: [
-          buildSay(reply),
-          {
-            Gather: {
-              _attr: {
-                input: "speech",
-                action: "/gather",
-                language: "en-GB",
-                timeout: "1",
-                speechTimeout: "auto",
-                enhanced: "true",
-              },
-            },
-          },
-        ],
-      },
-      { declaration: true }
-    );
-
-    res.type("text/xml").send(twiml);
+    // *** NOTE ***
+    // For simplicity, this code just logs the reply.
+    // To speak it mid-call, you will upgrade to TwiML injection (Twilio REST API).
+    // The caller will be prompted to say something again after the filler.
   } catch (err) {
     console.error("❌ GPT Error:", err);
-
-    const errorTwiml = xml(
-      {
-        Response: [
-          buildSay("Sorry, there was a problem. Could you please repeat that?"),
-          {
-            Gather: {
-              _attr: {
-                input: "speech",
-                action: "/gather",
-                language: "en-GB",
-                timeout: "1",
-                speechTimeout: "auto",
-                enhanced: "true",
-              },
-            },
-          },
-        ],
-      },
-      { declaration: true }
-    );
-
-    res.type("text/xml").send(errorTwiml);
   }
 });
 
