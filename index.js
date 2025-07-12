@@ -1,5 +1,4 @@
 import express from "express";
-import { v4 as uuidv4 } from "uuid";
 import xml from "xml";
 import OpenAI from "openai";
 
@@ -8,19 +7,30 @@ const openai = new OpenAI();
 
 app.use(express.urlencoded({ extended: true }));
 
-// Twilio voice webhook
-app.post("/voice", async (req, res) => {
-  const userSpeech = req.body.SpeechResult;
-  const attempt = parseInt(req.body.CurrentAttempt || "1", 10);
+// Store the last conversation per call
+const sessions = {};
 
-  // If no speech yet (first call), greet and start Gather
+app.post("/voice", async (req, res) => {
+  const callSid = req.body.CallSid;
+  const userSpeech = req.body.SpeechResult?.trim();
+  console.log(`📞 Incoming call: ${callSid}`);
+  console.log(`🗣️ User said: "${userSpeech}"`);
+
+  // Initialise session if new
+  if (!sessions[callSid]) {
+    sessions[callSid] = [];
+  }
+
+  let twimlResponse = "";
+
   if (!userSpeech) {
-    const twiml = xml(
+    // First call answer
+    twimlResponse = xml(
       {
         Response: [
           {
             Say: {
-              _attr: { voice: "Polly.Amy-Neural" },
+              _attr: { voice: "Polly.Emma-Neural" },
               _cdata: "Hello, Silver Birch Landscaping and Gardening. How can I help you today?",
             },
           },
@@ -29,13 +39,11 @@ app.post("/voice", async (req, res) => {
               _attr: {
                 input: "speech",
                 action: "/voice",
-                method: "POST",
-                timeout: "5",
-                speechTimeout: "auto",
+                timeout: "3",
               },
               Say: {
-                _attr: { voice: "Polly.Amy-Neural" },
-                _cdata: "Please tell me what you'd like help with.",
+                _attr: { voice: "Polly.Emma-Neural" },
+                _cdata: "(You can speak after the beep.)",
               },
             },
           },
@@ -43,93 +51,92 @@ app.post("/voice", async (req, res) => {
       },
       { declaration: true }
     );
+  } else {
+    // Save user input to session
+    sessions[callSid].push({ role: "user", content: userSpeech });
 
-    return res.type("text/xml").send(twiml);
-  }
-
-  // Acknowledge the user's input
-  console.log(`💬 User said: ${userSpeech}`);
-
-  // Call OpenAI for a reply
-  let gptResponse = "I'm sorry, I didn't catch that. Could you please repeat?";
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a polite receptionist for a landscaping and gardening business in the UK. Keep responses short (max 2 sentences) and warm. Reconfirm what the customer said if possible.",
-        },
-        { role: "user", content: userSpeech },
-      ],
-    });
-
-    gptResponse =
-      completion.choices[0].message?.content?.trim() ||
-      gptResponse;
-  } catch (err) {
-    console.error("❌ GPT Error:", err);
-  }
-
-  console.log(`🤖 GPT Reply: ${gptResponse}`);
-
-  // If user has tried 2 times without input, end call politely
-  if (attempt >= 2 && (!userSpeech || userSpeech.trim() === "")) {
-    const twiml = xml(
+    // Pre-filler response
+    twimlResponse = xml(
       {
         Response: [
           {
             Say: {
-              _attr: { voice: "Polly.Amy-Neural" },
-              _cdata: "It seems we're having trouble hearing you. Thank you for calling. Goodbye.",
+              _attr: { voice: "Polly.Emma-Neural" },
+              _cdata: "One moment please...",
             },
           },
-          { Hangup: {} },
         ],
       },
       { declaration: true }
     );
-    return res.type("text/xml").send(twiml);
+
+    // Send pre-filler response while GPT processes
+    res.type("text/xml").send(twimlResponse);
+
+    // Generate GPT reply
+    let gptResponseText = "";
+    try {
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a polite receptionist for a landscaping and gardening company in the UK. Keep answers under 2 sentences. Always finish by asking if there's anything else the caller needs.",
+          },
+          ...sessions[callSid],
+        ],
+      });
+      gptResponseText =
+        completion.choices[0].message?.content?.trim() ||
+        "I'm sorry, could you please repeat that?";
+      console.log(`🤖 GPT Response: "${gptResponseText}"`);
+
+      // Save assistant reply
+      sessions[callSid].push({ role: "assistant", content: gptResponseText });
+    } catch (error) {
+      console.error("❌ GPT Error:", error);
+      gptResponseText =
+        "I'm sorry, something went wrong. Could you please repeat that?";
+    }
+
+    // Build TwiML for GPT reply + next Gather
+    const finalTwiml = xml(
+      {
+        Response: [
+          {
+            Say: {
+              _attr: { voice: "Polly.Emma-Neural" },
+              _cdata: gptResponseText,
+            },
+          },
+          {
+            Gather: {
+              _attr: {
+                input: "speech",
+                action: "/voice",
+                timeout: "3",
+              },
+              Say: {
+                _attr: { voice: "Polly.Emma-Neural" },
+                _cdata: "Is there anything else I can help you with?",
+              },
+            },
+          },
+        ],
+      },
+      { declaration: true }
+    );
+
+    // Respond with GPT reply and re-prompt
+    res.type("text/xml").send(finalTwiml);
+    return;
   }
 
-  // Speak GPT reply and gather again
-  const twiml = xml(
-    {
-      Response: [
-        {
-          Pause: { _attr: { length: "1" } },
-        },
-        {
-          Say: {
-            _attr: { voice: "Polly.Amy-Neural" },
-            _cdata: gptResponse,
-          },
-        },
-        {
-          Gather: {
-            _attr: {
-              input: "speech",
-              action: "/voice",
-              method: "POST",
-              timeout: "5",
-              speechTimeout: "auto",
-            },
-            Say: {
-              _attr: { voice: "Polly.Amy-Neural" },
-              _cdata: "Is there anything else I can help you with?",
-            },
-          },
-        },
-      ],
-    },
-    { declaration: true }
-  );
-
-  res.type("text/xml").send(twiml);
+  res.type("text/xml").send(twimlResponse);
 });
 
-// Start the Express server
+// Start server
 app.listen(10000, () => {
   console.log("🌐 Server listening on port 10000");
 });
